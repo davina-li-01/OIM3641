@@ -1,7 +1,7 @@
-# OIM 3641 — Problem Solving & Software Design
+# OIM 3641 — AI Driven App Development
 
 This is my classwork repo for OIM 3641 at Babson. Everything I build for this
-course — in-class activities, homework, and project work — lives here.
+course, in-class activities, homework, and project work, lives here.
 
 ## About Me
 
