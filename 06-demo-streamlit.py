@@ -15,8 +15,8 @@ st.sidebar.title("Inputs")
 ticker = st.sidebar.text_input("Enter stock ticker",
                                value='AAPL',)
 col1, col2 = st.sidebar.columns(2)
-start_date = col1.date_input("Start Date", START)
-end_date = col2.date_input("End Date", END)
+start_date = col1.date_input("Start Date", value=START)
+end_date = col2.date_input("End Date", value=END)
 
 mv_avg = st.sidebar.slider("Moving Average",
                            min_value = 0,
@@ -28,6 +28,7 @@ run_analysis = st.sidebar.button("Run Analysis",
                                  type = "primary")
 
 def get_stock_data(ticker, start_date, end_date):
+
     try:
         data = yf.download(ticker, start=start_date, end=end_date)
         if data.empty:
@@ -38,11 +39,54 @@ def get_stock_data(ticker, start_date, end_date):
     except Exception as e:
         return None, f"Download failed due to {e}"
 
-
 if run_analysis:
-    data, message = get_stock_data(ticker, start_date, end_date)
-    if data is None:
-        st.error(message)
-    else:
-        st.success(message)
-        st.dataframe(data)
+    with st.spinner (f"Fetching {ticker} data..."):
+        df, msg = get_stock_data(ticker, start_date, end_date)
+        if df is not None:
+            st.sidebar.success(msg)
+        else:
+            st.sidebar.error(msg)
+            st.stop()
+        df['MA'] = df['Close'].rolling(window=mv_avg).mean()
+        df['pct_chg'] = df['Close'].pct_change()
+        tab1, tab2, tab3 = st.tabs(['Chart', 'Statistics', 'Raw Data'])
+
+        with tab1:
+            st.subheader(f"{ticker} Price Analysis")
+            col1, col2, col3 = st.columns(3)
+            col1.metric(label="Last Price", value= f"{df.Close.iloc[-1]: .2f}")
+            col2.metric(label="Cummulative Change", value=f"{df.Close.iloc[-1]/df.Close.iloc[0]-1: .2%}")
+            col3.metric(label="Trading Days", value=f"{df.Close.count()}")
+            fig = px.line(df, y=['Close', 'MA'])
+            fig.update_layout(hovermode='x unified')
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab2:
+            st.subheader(f"{ticker} Summary Statistics")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Daily Change Stats**")
+                summary = df["pct_chg"].describe()
+                st.dataframe(summary)
+            with col2:
+                st.write("**Price Stats**")
+                price_stats = pd.DataFrame({
+                    'Metric': ['High', 'Low', 'Mean', 'Volatility'],
+                    'Values': [
+                        f"{df.Close.max():.2f}",
+                        f"{df.Close.min()}:.2f",
+                        f"{df.Close.mean()}:.2f",
+                        f"{df.Close.std()}:.2f"
+                    ]
+                })
+                st.dataframe(price_stats)
+
+        with tab3:
+            st.subheader(f"{ticker} Raw Data")
+            csv = df.to_csv()
+            st.download_button(
+                "Download Raw Data",
+                csv,
+            file_name=f"({ticker}+Raw_Data.csv)",
+            mime="text/csv"
+            )
