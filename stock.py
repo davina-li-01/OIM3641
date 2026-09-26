@@ -1,66 +1,99 @@
-from datetime import date,timedelta
+import datetime as dt
+
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-import numpy as np
-import yfinance as yf
-# CHANGED: deleted "from fontTools.subset import usage"
+
+from stock import Stock
+
+st.set_page_config(page_title="Stock Analysis", layout="wide")
+st.title("Stock Analysis App")
 
 
-class Stock:
-    def __init__(self,symbol, start=None, end=None, ma_window: int=10):
-        self.symbol = symbol
-        self.start = start
-        self.end = end
-        self.ma_window = ma_window
-        self.data, self.message = self.get_data()  # CHANGED
-
-    def get_data(self):
-        try:
-            data = yf.download(tickers=self.symbol,  # CHANGED
-                               start=self.start,
-                               end=self.end,
-                               progress=False,
-                               multi_level_index=False)
-            if data.empty:
-                return None, f"No data for {self.symbol}"
-            data = self._calc_returns(data)  # CHANGED
-            data['MA'] = self.calc_MA(data)
-            return data, f"Successfully downloaded for {self.symbol}"
-        except Exception as e:
-            return None, f"Failed due to {e}"
-
-    def _calc_returns(self,df):
-        df['change'] = df['Close'] - df['Close'].shift(1)  # CHANGED
-        df['return'] = np.log(df['Close']).diff().round(4)
-        return df.dropna()
-
-    def calc_MA(self,df):
-        df['MA' = df['Close'].rolling(window=self.ma_window).mean()]
-
-    def plot_return_dist(self):
-        mean_return = self.data['return'].mean
-        fig = pxhistogram(self.data['return'],
-                          nbins=35,
-                          title=f" Distribution of daily returns for {self.symbol}",
-                          labels={'value':'Return','count':'Frequency'})
-        fig.update_traces(marker_line_color='rgb(255,0,0)',
-                          marker_line_width=0.5)
-        fig.add_vline(x=mean_return,
-                      line_dash='dash',
-                      line_color='red',
-                      annotation_text= f"Mean: {mean_return:.2f}",
-                      annotation_position='top right')
+@st.cache_data
+def load_stock(symbol, start, end, ma_window):
+    """Creating a Stock downloads the data, so this is the fetch"""
+    return Stock(symbol, start, end, ma_window)
 
 
-# --- For development testing only ---
+# --- Sidebar (shared by both tabs) ---
+st.sidebar.header("Settings")
+symbol = st.sidebar.text_input("Ticker symbol", "AAPL").upper().strip()
+start = st.sidebar.date_input("Start date", dt.date.today() - dt.timedelta(days=365))
+end = st.sidebar.date_input("End date", dt.date.today())
+ma_window = st.sidebar.slider("Moving average window", 5, 200, 20)
 
-def main():
-    test = Stock(symbol= "AAPL", start= "2025-09-24", end= "2050-09-24")
-    print(test.symbol)
-    print(test.message)
-        fig = test.plot_return_dist()
-        fig.show()
+# remember that the button was clicked so the page doesn't reset on every widget change
+if st.sidebar.button("Get Data"):
+    st.session_state.fetched = True
 
-if __name__ == "__main__":
-    main()
+tab1, tab2 = st.tabs(["Single Stock Analysis", "Portfolio Comparison"])
+
+# --- Tab 1: Single Stock ---
+with tab1:
+    if not st.session_state.get("fetched"):
+        st.info("Choose your settings in the sidebar and click Get Data.")
+    else:
+        with st.spinner(f"Downloading {symbol}..."):
+            stock = load_stock(symbol, start, end, ma_window)
+
+        if stock.data is None:
+            st.error(stock.message)
+        else:
+            st.success(stock.message)
+            df = stock.data
+
+            # metrics
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Last Close", f"${df['Close'].iloc[-1]:.2f}",
+                        f"{df['change'].iloc[-1]:.2f}")
+            col2.metric("Cumulative Return", f"{df['return'].sum():.2%}")
+            col3.metric("Trading Days", len(df))
+
+            # price + moving average (the class doesn't have this chart, so build it here)
+            fig = px.line(df, x=df.index, y=["Close", "MA"],
+                          title=f"{symbol} Close Price and {ma_window}-Day Moving Average",
+                          labels={"value": "Price ($)", "variable": ""})
+            fig.update_layout(hovermode="x unified")
+            st.plotly_chart(fig, use_container_width=True)
+            # note: first ma_window - 1 rows of MA are NaN, so the MA line starts later
+
+            # charts from the class
+            st.plotly_chart(stock.plot_performance(), use_container_width=True)
+            st.plotly_chart(stock.plot_return_dist(), use_container_width=True)
+
+            # stats table
+            st.subheader("Return Statistics")
+            st.dataframe(df["return"].describe())
+
+# --- Tab 2: Portfolio Comparison ---
+with tab2:
+    tickers_input = st.text_input("Enter tickers separated by commas", "AAPL, MSFT, GOOG")
+    tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+
+    if st.button("Compare"):
+        st.session_state.compared = True
+
+    if st.session_state.get("compared"):
+        performance = {}
+        with st.spinner("Downloading portfolio data..."):
+            for ticker in tickers:
+                s = load_stock(ticker, start, end, 10)  # MA not used here
+                if s.data is None:
+                    st.error(s.message)
+                    continue  # skip this one, keep going
+                cum = s.data["return"].cumsum()
+                performance[ticker] = cum - cum.iloc[0]  # zero-based: every line starts at 0.0
+
+        if performance:
+            perf_df = pd.DataFrame(performance)
+            fig = px.line(perf_df, x=perf_df.index, y=perf_df.columns,
+                          title="Cumulative Performance Comparison",
+                          labels={"value": "Cum Return", "index": "Date", "variable": "Ticker"})
+            fig.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.7)
+            fig.update_layout(yaxis_tickformat=".1%", hovermode="x unified")
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.caption("Starting values (should all be 0.0):")
+            st.write(perf_df.iloc[0])
