@@ -10,7 +10,6 @@ from stock import Stock
 st.set_page_config(page_title="Stock Analysis", layout="wide")
 st.title("Stock Analysis App")
 
-
 @st.cache_data
 def load_stock(symbol, start, end, ma_window, ma_window2):
     """Creating a Stock downloads the data, so this is the fetch"""
